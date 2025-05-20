@@ -26,6 +26,10 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
+from selenium.common.exceptions import TimeoutException
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
@@ -47,9 +51,13 @@ def clean_input(name: str) -> str:
 
 
 def get_best_match_link(driver, cleaned_query: str):
-    WebDriverWait(driver, 10).until(
+    try:
+        WebDriverWait(driver, 10).until(
         EC.presence_of_element_located((By.XPATH, '//a[contains(@href,"/otc/") or contains(@href,"/medicine/")]'))
     )
+    except TimeoutException:
+        # no matchable links appeared in time
+        return None
     elems = driver.find_elements(By.XPATH, '//a[contains(@href,"/otc/") or contains(@href,"/medicine/")]')
     candidates = []
     flat_query = cleaned_query.replace(' ', '')
@@ -110,7 +118,10 @@ def scrape_composition(drug_name: str) -> dict:
     )
     try:
         driver.get(url)
-        time.sleep(2)
+        #time.sleep(2)
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div.search-results"))
+        )
 
         best_elem = get_best_match_link(driver, cleaned)
         if not best_elem:
@@ -118,7 +129,13 @@ def scrape_composition(drug_name: str) -> dict:
 
         href = best_elem.get_attribute("href")
         driver.get(href)
-        time.sleep(2)
+        #time.sleep(2)
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located(
+                (By.XPATH, '//*[contains(text(),"Composition")]')
+            )
+        )
+
 
         try:
             title_el = driver.find_element(By.XPATH, '//*[contains(@class,"DrugHeader__header-content")]')
@@ -138,9 +155,14 @@ def api_search():
     if not drug_name:
         return jsonify({"error": "Please provide 'drug-name' parameter"}), 400
 
-    result = scrape_composition(drug_name)
-    return jsonify(result)
-
+    #result = scrape_composition(drug_name)
+    #return jsonify(result)
+    try:
+        result = scrape_composition(drug_name)
+        return jsonify(result)
+    except Exception as e:
+        logger.exception("Unexpected error in /search")
+        return jsonify({"error": "Internal server error"}), 500
 
 if __name__ == '__main__':
     # listen on all interfaces, port 5000
